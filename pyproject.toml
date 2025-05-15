@@ -3,7 +3,7 @@ name = "slack-openrouter-agent"
 version = "0.1.0"
 description = "A Slack bot that uses OpenRouter to answer questions"
 packages = [
-    { include = "app", from = "." }
+    { include = "flask_app", from = "." }
 ]
 
 [tool.poetry.dependencies]
@@ -15,6 +15,7 @@ python-dotenv = "^1.0.1"
 httpx = "^0.27.0"
 aiohttp = "^3.11.18"
 asyncio = "^3.4.3"
+flask = "^3.1.1"
 
 [build-system]
 requires = ["poetry-core"]

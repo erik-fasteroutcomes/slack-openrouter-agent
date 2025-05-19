@@ -16,32 +16,72 @@ slack_client = WebClient(token=os.getenv("SLACK_BOT_TOKEN"))
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
-    verify_result = verify_slack_signature()
-    if verify_result is not None:
-        return verify_result
+    try:
+        verify_result = verify_slack_signature()
+        if verify_result is not None:
+            return verify_result
 
-    raw_body = request.data
-    payload = json.loads(raw_body)
+        raw_body = request.data
+        payload = json.loads(raw_body)
 
-    # Slack URL verification challenge
-    if payload.get("type") == "url_verification":
-        return jsonify({"challenge": payload["challenge"]})
+        # print(f"Received payload: {payload}")
 
-    if payload["type"] == "event_callback":
-        event = payload["event"]
+        # Slack URL verification challenge
+        if payload.get("type") == "url_verification":
+            return jsonify({"challenge": payload["challenge"]})
 
-        # Ignore bot messages
-        if "bot_id" in event or event.get("user") == os.getenv("SLACK_BOT_USER_ID"):
-            return jsonify({"ok": True})
+        if payload["type"] == "event_callback":
+            event = payload["event"]
 
-        if "user" not in event:
-            return jsonify({"ok": True})
+            print(f"Received event: {event}")
 
-        if event["type"] == "app_mention":
-            handle_app_mention_background(event)
-            return jsonify({"ok": True})
+            # Ignore bot messages
+            if "bot_id" in event or event.get("user") == os.getenv("SLACK_BOT_USER_ID"):
+                return jsonify({"ok": True})
 
-    return jsonify({"ok": True})
+            if "user" not in event:
+                return jsonify({"ok": True})
+
+            if event["type"] == "app_mention":
+                handle_app_mention_background(event)
+                return jsonify({"ok": True})
+            
+            if event["type"] == "message" and event.get("channel_type") == "im":
+                handle_dm_background(event)
+                return jsonify({"ok": True})
+
+        return jsonify({"ok": True})
+    except Exception as e:
+        print(f"Error processing event: {e}")
+        return jsonify({"ok": False}), 500
+
+
+def handle_dm_background(event):
+    def task():
+        handle_dm(event)
+    Thread(target=task).start()
+
+def handle_dm(event: dict):
+    user_input = event.get("text", "")
+    channel_id = event["channel"]
+    thread_ts = event.get("ts")
+
+    if not user_input:
+        slack_client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=thread_ts,
+            text="Please include a message."
+        )
+        return
+
+    reply = query_openrouter(user_input)
+
+    slack_client.chat_postMessage(
+        channel=channel_id,
+        thread_ts=thread_ts,
+        text=reply
+    )
+
 
 def handle_app_mention_background(event):
     def task():
@@ -93,10 +133,16 @@ def verify_slack_signature():
         return jsonify({"error": "Invalid timestamp"}), 400
 
     sig_basestring = f"v0:{timestamp}:{request.data.decode()}"
+    slack_signing_secret = os.getenv("SLACK_SIGNING_SECRET")
+    
+    if not slack_signing_secret:
+        print("Missing signing secret")
+        return jsonify({"error": "Missing signing secret"}), 500
+    
     my_signature = (
         "v0="
         + hmac.new(
-            os.getenv("SLACK_SIGNING_SECRET").encode(),
+            slack_signing_secret.encode(),
             sig_basestring.encode(),
             hashlib.sha256,
         ).hexdigest()
